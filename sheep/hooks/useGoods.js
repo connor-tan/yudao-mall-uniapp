@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import dayjs from 'dayjs';
 import $url from '@/sheep/url';
 import { formatDate } from '@/sheep/helper/utils';
+import { DeliveryTypeEnum } from '@/sheep/helper/const';
 
 /**
  * 格式化销量
@@ -124,6 +125,12 @@ export function formatOrderStatus(order) {
   if (order.status === 10 && order.deliveryType === 2) {
     return '待核销';
   }
+  if (order.status === 10 && order.deliveryType === DeliveryTypeEnum.STATION.type) {
+    return '待配送';
+  }
+  if (order.status === 10 && order.deliveryType === DeliveryTypeEnum.MIXED.type) {
+    return '待配送';
+  }
   if (order.status === 20) {
     return '待收货';
   }
@@ -145,8 +152,20 @@ export function formatOrderStatusDescription(order) {
   if (order.status === 0) {
     return `请在 ${formatDate(order.payExpireTime)} 前完成支付`;
   }
+  if (order.status === 10 && order.deliveryType === DeliveryTypeEnum.STATION.type) {
+    return '学校站点配送准备中，请耐心等待';
+  }
+  if (order.status === 10 && order.deliveryType === DeliveryTypeEnum.MIXED.type) {
+    return '订单正在分配送准备中，请在详情中查看各配送单状态';
+  }
   if (order.status === 10) {
     return '商家未发货，请耐心等待';
+  }
+  if (order.status === 20 && order.deliveryType === DeliveryTypeEnum.STATION.type) {
+    return '学校配送已完成，请确认是否已收到';
+  }
+  if (order.status === 20 && order.deliveryType === DeliveryTypeEnum.MIXED.type) {
+    return '订单存在多个配送单，请在详情中分别确认收货';
   }
   if (order.status === 20) {
     return '商家已发货，请耐心等待';
@@ -167,15 +186,16 @@ export function formatOrderStatusDescription(order) {
  */
 export function handleOrderButtons(order) {
   order.buttons = [];
+  const hasSplitDeliveries = Boolean(order.hasDeliveries || order.deliveries?.length);
   if (order.type === 3) {
     // 查看拼团
     order.buttons.push('combination');
   }
-  if (order.status === 20) {
+  if (order.status === 20 && !hasSplitDeliveries) {
     // 确认收货
     order.buttons.push('confirm');
   }
-  if (order.logisticsId > 0) {
+  if (order.logisticsId > 0 && !hasSplitDeliveries) {
     // 查看物流
     order.buttons.push('express');
   }

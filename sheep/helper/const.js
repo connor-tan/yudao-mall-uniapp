@@ -104,6 +104,8 @@ export const PromotionActivityTypeEnum = {
 export const DeliveryTypeEnum = {
   EXPRESS: { type: 1, name: '快递发货' },
   PICK_UP: { type: 2, name: '用户自提' },
+  STATION: { type: 3, name: '站点配送' },
+  MIXED: { type: 4, name: '混合配送' },
 };
 export const getTimeStatusEnum = (startTime, endTime) => {
   const now = dayjs();

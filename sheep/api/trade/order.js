@@ -46,6 +46,13 @@ const OrderApi = {
       if (data.items[i].cartId) {
         data2[encodeURIComponent('items[' + i + '' + '].cartId')] = data.items[i].cartId + '';
       }
+      if (data.items[i].studentId) {
+        data2[encodeURIComponent('items[' + i + '' + '].studentId')] = data.items[i].studentId + '';
+      }
+      if (data.items[i].windowSkuId) {
+        data2[encodeURIComponent('items[' + i + '' + '].windowSkuId')] =
+          data.items[i].windowSkuId + '';
+      }
     }
     const queryString = Object.keys(data2)
       .map((key) => key + '=' + data2[key])
@@ -111,6 +118,16 @@ const OrderApi = {
       method: 'PUT',
       params: {
         id,
+      },
+    });
+  },
+  // 按配送单确认收货
+  receiveDelivery: (deliveryId) => {
+    return request({
+      url: `/trade/order/receive-delivery`,
+      method: 'PUT',
+      params: {
+        deliveryId,
       },
     });
   },

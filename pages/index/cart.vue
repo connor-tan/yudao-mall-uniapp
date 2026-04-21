@@ -160,6 +160,8 @@
         count: item.count,
         cartId: item.id,
         categoryId: item.spu.categoryId,
+        studentId: item.subscriptionStudentId,
+        windowSkuId: item.subscriptionWindowSkuId,
       });
     });
     if (isEmpty(items)) {

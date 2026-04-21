@@ -46,6 +46,8 @@ const cart = defineStore({
       const { code } = await CartApi.addCart({
         skuId: goodsInfo.id,
         count: goodsInfo.goods_num,
+        studentId: goodsInfo.studentId,
+        windowSkuId: goodsInfo.windowSkuId,
       });
       // 刷新购物车列表
       if (code === 0) {

@@ -1,7 +1,23 @@
 <template>
   <s-layout title="确认订单">
     <!-- 头部地址选择【配送地址】【自提地址】 -->
-    <AddressSelection v-model="addressState" />
+    <AddressSelection v-if="showAddressSelection" v-model="addressState" />
+
+    <view v-if="stationDeliveries.length" class="order-card-box ss-m-b-14">
+      <view
+        v-for="delivery in stationDeliveries"
+        :key="delivery.id || delivery.schoolId"
+        class="station-delivery-card bg-white ss-r-10 ss-p-20 ss-m-b-14"
+      >
+        <view class="station-title">学校配送</view>
+        <view class="station-row">学校：{{ delivery.schoolNameSnapshot }}</view>
+        <view class="station-row">站点：{{ delivery.stationNameSnapshot }}</view>
+        <view class="station-row">地址：{{ delivery.stationAddressSnapshot || '-' }}</view>
+        <view class="station-row">
+          联系人：{{ delivery.contactName || '-' }} {{ delivery.contactMobile || '' }}
+        </view>
+      </view>
+    </view>
 
     <!-- 商品信息 -->
     <view class="order-card-box ss-m-b-14">
@@ -10,7 +26,7 @@
         :key="item.skuId"
         :img="item.picUrl"
         :title="item.spuName"
-        :skuText="item.properties.map((property) => property.valueName).join(' ')"
+        :skuText="buildItemSubtitle(item)"
         :price="item.price"
         :num="item.count"
         marginBottom="10"
@@ -84,7 +100,7 @@
         <!-- 快递配置时，信息的展示 -->
         <view
           class="order-item ss-flex ss-col-center ss-row-between"
-          v-if="addressState.deliveryType === 1"
+          v-if="addressState.deliveryType === DeliveryTypeEnum.EXPRESS.type && hasExpressDelivery"
         >
           <view class="item-title">运费</view>
           <view class="ss-flex ss-col-center">
@@ -95,10 +111,7 @@
           </view>
         </view>
         <!-- 门店自提时，需要填写姓名和手机号 -->
-        <view
-          class="order-item ss-flex ss-col-center ss-row-between"
-          v-if="addressState.deliveryType === 2"
-        >
+        <view class="order-item ss-flex ss-col-center ss-row-between" v-if="showPickUpFields">
           <view class="item-title">联系人</view>
           <view class="ss-flex ss-col-center">
             <uni-easyinput
@@ -110,10 +123,7 @@
             />
           </view>
         </view>
-        <view
-          class="order-item ss-flex ss-col-center ss-row-between"
-          v-if="addressState.deliveryType === 2"
-        >
+        <view class="order-item ss-flex ss-col-center ss-row-between" v-if="showPickUpFields">
           <view class="item-title">联系电话</view>
           <view class="ss-flex ss-col-center">
             <uni-easyinput
@@ -221,7 +231,7 @@
 </template>
 
 <script setup>
-  import { reactive, ref, watch } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
   import AddressSelection from '@/pages/order/addressSelection.vue';
   import sheep from '@/sheep';
@@ -236,6 +246,7 @@
       items: [], // 商品项列表
       price: {}, // 价格信息
     },
+    pickUpEnabled: false, // 是否允许门店自提
     showCoupon: false, // 是否展示优惠劵
     couponInfo: [], // 优惠劵列表
     showDiscount: false, // 是否展示营销活动
@@ -251,6 +262,60 @@
     receiverName: '', // 收件人名称
     receiverMobile: '', // 收件人手机
   });
+
+  const deliveryList = computed(() => state.orderInfo.deliveries || []);
+  const stationDeliveries = computed(() =>
+    deliveryList.value.filter((item) => item.deliveryType === DeliveryTypeEnum.STATION.type),
+  );
+  const hasExpressDelivery = computed(() =>
+    deliveryList.value.some((item) => item.deliveryType === DeliveryTypeEnum.EXPRESS.type),
+  );
+  const showAddressSelection = computed(
+    () => hasExpressDelivery.value || addressState.value.isPickUp,
+  );
+  const showPickUpFields = computed(
+    () => addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type,
+  );
+
+  function buildItemSubtitle(item) {
+    const propertyText = (item.properties || []).map((property) => property.valueName).join(' ');
+    if (!item.subscriptionStudentId) {
+      return propertyText;
+    }
+    const relationText = [
+      item.subscriptionStudentNameSnapshot,
+      item.subscriptionSchoolNameSnapshot,
+      item.subscriptionClassNameSnapshot,
+      item.subscriptionGradeNameSnapshot,
+    ]
+      .filter(Boolean)
+      .join(' / ');
+    return [propertyText, relationText].filter(Boolean).join(' | ');
+  }
+
+  function syncAddressStateFromOrderInfo() {
+    const hasStation = stationDeliveries.value.length > 0;
+    addressState.value.isPickUp = state.pickUpEnabled && !hasStation;
+    if (hasExpressDelivery.value && !addressState.value.deliveryType) {
+      addressState.value.deliveryType = DeliveryTypeEnum.EXPRESS.type;
+      return;
+    }
+    if (
+      !hasExpressDelivery.value &&
+      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type
+    ) {
+      addressState.value.deliveryType = undefined;
+      return;
+    }
+    if (
+      !addressState.value.isPickUp &&
+      addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type
+    ) {
+      addressState.value.deliveryType = hasExpressDelivery.value
+        ? DeliveryTypeEnum.EXPRESS.type
+        : undefined;
+    }
+  }
 
   // ========== 积分 ==========
   /**
@@ -270,11 +335,15 @@
 
   // 提交订单
   function onConfirm() {
-    if (addressState.value.deliveryType === 1 && !addressState.value.addressInfo.id) {
+    if (
+      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type &&
+      hasExpressDelivery.value &&
+      !addressState.value.addressInfo.id
+    ) {
       sheep.$helper.toast('请选择收货地址');
       return;
     }
-    if (addressState.value.deliveryType === 2) {
+    if (showPickUpFields.value) {
       if (!addressState.value.pickUpInfo.id) {
         sheep.$helper.toast('请选择自提门店地址');
         return;
@@ -297,21 +366,31 @@
 
   // 创建订单&跳转
   async function submitOrder() {
-    const { code, data } = await OrderApi.createOrder({
+    const payload = {
       items: state.orderPayload.items,
       couponId: state.orderPayload.couponId,
       remark: state.orderPayload.remark,
-      deliveryType: addressState.value.deliveryType,
-      addressId: addressState.value.addressInfo.id, // 收件地址编号
-      pickUpStoreId: addressState.value.pickUpInfo.id, //自提门店编号
-      receiverName: addressState.value.receiverName, // 选择门店自提时，该字段为联系人名
-      receiverMobile: addressState.value.receiverMobile, // 选择门店自提时，该字段为联系人手机
       pointStatus: state.pointStatus,
       combinationActivityId: state.orderPayload.combinationActivityId,
       combinationHeadId: state.orderPayload.combinationHeadId,
       seckillActivityId: state.orderPayload.seckillActivityId,
       pointActivityId: state.orderPayload.pointActivityId,
-    });
+    };
+    if (addressState.value.deliveryType) {
+      payload.deliveryType = addressState.value.deliveryType;
+    }
+    if (
+      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type &&
+      addressState.value.addressInfo.id
+    ) {
+      payload.addressId = addressState.value.addressInfo.id;
+    }
+    if (addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type) {
+      payload.pickUpStoreId = addressState.value.pickUpInfo.id;
+      payload.receiverName = addressState.value.receiverName;
+      payload.receiverMobile = addressState.value.receiverMobile;
+    }
+    const { code, data } = await OrderApi.createOrder(payload);
     if (code !== 0) {
       return;
     }
@@ -355,9 +434,14 @@
     state.orderInfo = data;
     state.couponInfo = data.coupons || [];
     // 设置收货地址
-    if (state.orderInfo.address) {
+    if (
+      state.orderInfo.address &&
+      state.orderInfo.address.id &&
+      state.orderInfo.address.id !== addressState.value.addressInfo.id
+    ) {
       addressState.value.addressInfo = state.orderInfo.address;
     }
+    syncAddressStateFromOrderInfo();
     return code;
   }
 
@@ -372,25 +456,22 @@
     // 获取交易配置
     const { data, code } = await TradeConfigApi.getTradeConfig();
     if (code === 0) {
-      addressState.value.isPickUp = data.deliveryPickUpEnabled;
+      state.pickUpEnabled = !!data.deliveryPickUpEnabled;
+      addressState.value.isPickUp = state.pickUpEnabled;
     }
 
-    // 价格计算
-    // 情况一：先自动选择“快递物流”
     addressState.value.deliveryType = DeliveryTypeEnum.EXPRESS.type;
     let orderCode = await getOrderInfo();
     if (orderCode === 0) {
       return;
     }
-    // 情况二：失败，再自动选择“门店自提”
-    if (addressState.value.isPickUp) {
+    if (state.pickUpEnabled) {
       addressState.value.deliveryType = DeliveryTypeEnum.PICK_UP.type;
-      let orderCode = await getOrderInfo();
+      orderCode = await getOrderInfo();
       if (orderCode === 0) {
         return;
       }
     }
-    // 情况三：都失败，则不选择
     addressState.value.deliveryType = undefined;
     await getOrderInfo();
   });
@@ -439,6 +520,21 @@
     width: 36rpx;
     height: 36rpx;
     margin: 0 4rpx;
+  }
+
+  .station-delivery-card {
+    .station-title {
+      font-size: 30rpx;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 12rpx;
+    }
+
+    .station-row {
+      font-size: 26rpx;
+      color: #666;
+      line-height: 42rpx;
+    }
   }
 
   .order-item {

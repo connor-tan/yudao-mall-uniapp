@@ -237,6 +237,8 @@
   import OrderApi from '@/sheep/api/trade/order';
   import { SharePageEnum } from '@/sheep/helper/const';
 
+  const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
+
   const bgColor = {
     bgColor: '#E93323',
     Color: '#fff',
@@ -257,6 +259,8 @@
     showActivityModel: false, // 【满减送/限时折扣】是否展示 Activity 营销活动的弹窗
     rewardActivity: {}, // 【满减送】活动
     activityList: [], // 【秒杀/拼团/砍价】可参与的 Activity 营销活动的列表
+    subscriptionStudentId: undefined, // 订刊购买绑定的学生
+    subscriptionWindowSkuId: undefined, // 订刊购买绑定的窗口 SKU
   });
 
   // 规格变更
@@ -265,19 +269,49 @@
     state.settlementSku = e;
   }
 
+  function normalizePositiveNumber(value) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined;
+  }
+
+  function getSubscriptionPurchaseContext() {
+    if (state.goodsInfo?.domainType !== PUBLICATION_DOMAIN_TYPE) {
+      return {};
+    }
+    if (!state.subscriptionStudentId || !state.subscriptionWindowSkuId) {
+      sheep.$helper.toast('刊物商品请从订刊入口选择学生后购买');
+      return null;
+    }
+    return {
+      studentId: state.subscriptionStudentId,
+      windowSkuId: state.subscriptionWindowSkuId,
+    };
+  }
+
   // 添加购物车
   function onAddCart(e) {
     if (!e.id) {
       sheep.$helper.toast('请选择商品规格');
       return;
     }
-    sheep.$store('cart').add(e);
+    const subscriptionContext = getSubscriptionPurchaseContext();
+    if (subscriptionContext === null) {
+      return;
+    }
+    sheep.$store('cart').add({
+      ...e,
+      ...subscriptionContext,
+    });
   }
 
   // 立即购买
   function onBuy(e) {
     if (!e.id) {
       sheep.$helper.toast('请选择商品规格');
+      return;
+    }
+    const subscriptionContext = getSubscriptionPurchaseContext();
+    if (subscriptionContext === null) {
       return;
     }
     sheep.$router.go('/pages/order/confirm', {
@@ -287,6 +321,7 @@
             skuId: e.id,
             count: e.goods_num,
             categoryId: state.goodsInfo.categoryId,
+            ...subscriptionContext,
           },
         ],
       }),
@@ -391,6 +426,8 @@
       return;
     }
     state.goodsId = options.id;
+    state.subscriptionStudentId = normalizePositiveNumber(options.studentId);
+    state.subscriptionWindowSkuId = normalizePositiveNumber(options.windowSkuId);
     // 1. 加载商品信息
     SpuApi.getSpuDetail(state.goodsId).then((res) => {
       if (res.code !== 0 || !res.data) {

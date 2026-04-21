@@ -49,7 +49,7 @@
     </view>
 
     <!-- 收货地址 -->
-    <view class="order-address-box" v-if="state.orderInfo.receiverAreaId > 0">
+    <view class="order-address-box" v-if="showLegacyAddress">
       <view class="ss-flex ss-col-center">
         <text class="address-username">
           {{ state.orderInfo.receiverName }}
@@ -61,10 +61,73 @@
       </view>
     </view>
 
-    <view
-      class="detail-goods"
-      :style="[{ marginTop: state.orderInfo.receiverAreaId > 0 ? '0' : '-40rpx' }]"
-    >
+    <view class="delivery-box" v-if="deliveryList.length">
+      <view
+        class="delivery-card bg-white ss-r-10 ss-m-b-20 ss-p-20"
+        v-for="delivery in deliveryList"
+        :key="delivery.id"
+      >
+        <view class="delivery-card__header ss-flex ss-row-between ss-col-center ss-m-b-16">
+          <text class="delivery-card__title">{{ formatDeliveryType(delivery.deliveryType) }}</text>
+          <text class="delivery-card__status">{{ formatDeliveryStatus(delivery) }}</text>
+        </view>
+        <view
+          class="delivery-card__row"
+          v-if="delivery.deliveryType === DeliveryTypeEnum.EXPRESS.type"
+        >
+          <view>{{ delivery.receiverName }} {{ delivery.receiverMobile }}</view>
+          <view>{{ delivery.receiverAreaName }} {{ delivery.receiverDetailAddress }}</view>
+          <view v-if="delivery.logisticsNo"> 物流：{{ delivery.logisticsNo }} </view>
+        </view>
+        <view
+          class="delivery-card__row"
+          v-else-if="delivery.deliveryType === DeliveryTypeEnum.STATION.type"
+        >
+          <view>学校：{{ delivery.schoolNameSnapshot }}</view>
+          <view>站点：{{ delivery.stationNameSnapshot }}</view>
+          <view>地址：{{ delivery.stationAddressSnapshot || '-' }}</view>
+          <view>联系人：{{ delivery.contactName || '-' }} {{ delivery.contactMobile || '' }}</view>
+        </view>
+        <view class="delivery-card__row" v-if="delivery.deliveryTime">
+          配送时间：{{ sheep.$helper.timeFormat(delivery.deliveryTime, 'yyyy-mm-dd hh:MM:ss') }}
+        </view>
+        <view class="delivery-card__row" v-if="delivery.receiveTime">
+          收货时间：{{ sheep.$helper.timeFormat(delivery.receiveTime, 'yyyy-mm-dd hh:MM:ss') }}
+        </view>
+        <view class="delivery-goods-list" v-if="deliveryItems(delivery.id).length">
+          <view
+            class="delivery-goods-item ss-flex ss-row-between ss-col-center"
+            v-for="item in deliveryItems(delivery.id)"
+            :key="item.id"
+          >
+            <view class="delivery-goods-item__info">
+              <view>{{ item.spuName }}</view>
+              <view class="delivery-goods-item__meta" v-if="item.subscriptionStudentId">
+                {{ item.subscriptionStudentNameSnapshot }}
+                <text v-if="item.subscriptionClassNameSnapshot">
+                  / {{ item.subscriptionClassNameSnapshot }}
+                </text>
+              </view>
+            </view>
+            <view class="delivery-goods-item__count">x{{ item.count }}</view>
+          </view>
+        </view>
+        <view class="delivery-card__actions ss-flex ss-row-right" v-if="delivery.status === 20">
+          <button
+            class="ss-reset-button tool-btn"
+            v-if="delivery.deliveryType === DeliveryTypeEnum.EXPRESS.type"
+            @tap.stop="onExpress(state.orderInfo.id)"
+          >
+            查看物流
+          </button>
+          <button class="ss-reset-button tool-btn" @tap.stop="onReceiveDelivery(delivery)">
+            确认收货
+          </button>
+        </view>
+      </view>
+    </view>
+
+    <view class="detail-goods" :style="[{ marginTop: showLegacyAddress ? '0' : '-40rpx' }]">
       <!-- 订单信 -->
       <view class="order-list" v-for="item in state.orderInfo.items" :key="item.goods_id">
         <view class="order-card">
@@ -72,7 +135,7 @@
             @tap="onGoodsDetail(item.spuId)"
             :img="item.picUrl"
             :title="item.spuName"
-            :skuText="item.properties.map((property) => property.valueName).join(' ')"
+            :skuText="buildOrderItemSubtitle(item)"
             :price="item.price"
             :num="item.count"
           >
@@ -259,7 +322,7 @@
 <script setup>
   import sheep from '@/sheep';
   import { onLoad, onShow } from '@dcloudio/uni-app';
-  import { reactive, ref, watch } from 'vue';
+  import { computed, reactive, ref } from 'vue';
   import { isEmpty } from 'lodash-es';
   import {
     fen2yuan,
@@ -271,6 +334,7 @@
   import DeliveryApi from '@/sheep/api/trade/delivery';
   import PayOrderApi from '@/sheep/api/pay/order';
   import PickUpVerify from '@/pages/order/pickUpVerify.vue';
+  import { DeliveryTypeEnum } from '@/sheep/helper/const';
 
   const statusBarHeight = sheep.$platform.device.statusBarHeight * 2;
   const headerBg = sheep.$url.css('/static/img/shop/order/order_bg.png');
@@ -278,6 +342,11 @@
   const state = reactive({
     orderInfo: {},
   });
+
+  const deliveryList = computed(() => state.orderInfo.deliveries || []);
+  const showLegacyAddress = computed(
+    () => !deliveryList.value.length && state.orderInfo.receiverAreaId > 0,
+  );
 
   // ========== 门店自提（核销） ==========
   const systemStore = ref({}); // 门店信息
@@ -325,6 +394,47 @@
     });
   }
 
+  function formatDeliveryType(deliveryType) {
+    if (deliveryType === DeliveryTypeEnum.EXPRESS.type) {
+      return '快递配送';
+    }
+    if (deliveryType === DeliveryTypeEnum.STATION.type) {
+      return '学校配送';
+    }
+    if (deliveryType === DeliveryTypeEnum.PICK_UP.type) {
+      return '到店自提';
+    }
+    return '混合配送';
+  }
+
+  function formatDeliveryStatus(delivery) {
+    return formatOrderStatus({
+      status: delivery.status,
+      deliveryType: delivery.deliveryType,
+      commentStatus: false,
+    });
+  }
+
+  function deliveryItems(deliveryId) {
+    return (state.orderInfo.items || []).filter((item) => item.deliveryId === deliveryId);
+  }
+
+  function buildOrderItemSubtitle(item) {
+    const propertyText = (item.properties || []).map((property) => property.valueName).join(' ');
+    if (!item.subscriptionStudentId) {
+      return propertyText;
+    }
+    const relationText = [
+      item.subscriptionStudentNameSnapshot,
+      item.subscriptionSchoolNameSnapshot,
+      item.subscriptionClassNameSnapshot,
+      item.subscriptionGradeNameSnapshot,
+    ]
+      .filter(Boolean)
+      .join(' / ');
+    return [propertyText, relationText].filter(Boolean).join(' | ');
+  }
+
   // 确认收货
   async function onConfirm(orderId, ignore = false) {
     // 需开启确认收货组件
@@ -353,6 +463,25 @@
         const { code } = await OrderApi.receiveOrder(orderId);
         if (code === 0) {
           await getOrderDetail(orderId);
+        }
+      },
+    });
+  }
+
+  async function onReceiveDelivery(delivery) {
+    if (!delivery?.id) {
+      return;
+    }
+    uni.showModal({
+      title: '提示',
+      content: '确认收货吗？',
+      success: async function (res) {
+        if (!res.confirm) {
+          return;
+        }
+        const { code } = await OrderApi.receiveDelivery(delivery.id);
+        if (code === 0) {
+          await getOrderDetail(state.orderInfo.id);
         }
       },
     });
@@ -507,6 +636,77 @@
       color: rgba(153, 153, 153, 1);
       margin-top: 20rpx;
     }
+  }
+
+  .delivery-box {
+    margin: -50rpx 20rpx 20rpx 20rpx;
+  }
+
+  .delivery-card {
+    .delivery-card__header {
+      .delivery-card__title {
+        font-size: 30rpx;
+        font-weight: 600;
+        color: #333;
+      }
+
+      .delivery-card__status {
+        font-size: 26rpx;
+        color: var(--ui-BG-Main);
+      }
+    }
+
+    .delivery-card__row {
+      font-size: 26rpx;
+      color: #666;
+      line-height: 40rpx;
+      margin-bottom: 8rpx;
+    }
+
+    .delivery-goods-list {
+      margin-top: 16rpx;
+      padding-top: 16rpx;
+      border-top: 1rpx solid #f2f2f2;
+    }
+
+    .delivery-goods-item {
+      padding: 10rpx 0;
+
+      .delivery-goods-item__info {
+        flex: 1;
+        font-size: 26rpx;
+        color: #333;
+      }
+
+      .delivery-goods-item__meta {
+        margin-top: 6rpx;
+        font-size: 24rpx;
+        color: #999;
+      }
+
+      .delivery-goods-item__count {
+        font-size: 26rpx;
+        color: #666;
+        margin-left: 20rpx;
+      }
+    }
+
+    .delivery-card__actions {
+      margin-top: 16rpx;
+    }
+  }
+
+  .tool-btn {
+    min-width: 160rpx;
+    height: 60rpx;
+    padding: 0 24rpx;
+    background: #eeeeee;
+    border-radius: 30rpx;
+    margin-left: 20rpx;
+    font-size: 26rpx;
+    font-weight: 400;
+    color: #333333;
+    line-height: 60rpx;
   }
 
   .detail-goods {
