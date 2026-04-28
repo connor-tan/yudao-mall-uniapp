@@ -5,7 +5,7 @@
       <uni-grid-item v-for="(item, index) in data.list" :key="index">
         <view
           class="grid-item-box ss-flex ss-flex-col ss-row-center ss-col-center"
-          @tap="sheep.$router.go(item.url)"
+          @tap="handleMenuTap(item)"
         >
           <view class="img-box">
             <view
@@ -77,6 +77,13 @@
 
   const resolveSubtitle = (item) =>
     item.url === SWITCH_STUDENT_ACTION ? currentStudentSubtitle.value : item.subtitle;
+
+  const handleMenuTap = (item) => {
+    if (!item?.url) {
+      return;
+    }
+    sheep.$router.go(item.url);
+  };
 </script>
 
 <style lang="scss" scoped>

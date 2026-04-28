@@ -49,7 +49,7 @@
     </su-popup>
 
     <!-- 情况一：单列布局 -->
-    <view v-if="state.iconStatus && state.pagination.total > 0" class="goods-list ss-m-t-20">
+    <view v-if="state.iconStatus && state.pagination.list.length > 0" class="goods-list ss-m-t-20">
       <view
         class="ss-p-l-20 ss-p-r-20 ss-m-b-20"
         v-for="item in state.pagination.list"
@@ -61,13 +61,13 @@
           :data="item"
           :topRadius="10"
           :bottomRadius="10"
-          @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+          @click="goGoodsDetail(item)"
         />
       </view>
     </view>
     <!-- 情况二：双列布局 -->
     <view
-      v-if="!state.iconStatus && state.pagination.total > 0"
+      v-if="!state.iconStatus && state.pagination.list.length > 0"
       class="ss-flex ss-flex-wrap ss-p-x-20 ss-m-t-20 ss-col-top"
     >
       <view class="goods-list-box">
@@ -78,7 +78,7 @@
             :data="item"
             :topRadius="10"
             :bottomRadius="10"
-            @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+            @click="goGoodsDetail(item)"
             @getHeight="mountMasonry($event, 'left')"
           >
             <template v-slot:cart>
@@ -95,7 +95,7 @@
             :topRadius="10"
             :bottomRadius="10"
             :data="item"
-            @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+            @click="goGoodsDetail(item)"
             @getHeight="mountMasonry($event, 'right')"
           >
             <template v-slot:cart>
@@ -106,29 +106,35 @@
       </view>
     </view>
     <uni-load-more
-      v-if="state.pagination.total > 0"
+      v-if="state.pagination.list.length > 0 || state.loadStatus === 'more'"
       :status="state.loadStatus"
       :content-text="{
         contentdown: '上拉加载更多',
       }"
       @tap="loadMore"
     />
-    <s-empty v-if="state.pagination.total === 0" icon="/static/soldout-empty.png" text="暂无商品" />
+    <s-empty
+      v-if="state.loadStatus === 'noMore' && state.pagination.list.length === 0"
+      icon="/static/soldout-empty.png"
+      text="暂无商品"
+    />
   </s-layout>
 </template>
 
 <script setup>
-  import { reactive, ref } from 'vue';
+  import { reactive, watch } from 'vue';
   import { onLoad, onReachBottom } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
   import { concat } from 'lodash-es';
   import { resetPagination } from '@/sheep/helper/utils';
   import SpuApi from '@/sheep/api/product/spu';
   import OrderApi from '@/sheep/api/trade/order';
+  import SubscriptionPublicationApi from '@/sheep/api/subscription/publication';
   import { appendSettlementProduct } from '@/sheep/hooks/useGoods';
 
+  const PUBLICATION_BIZ_SCENE = 'PUBLICATION';
+  const studentStore = sheep.$store('student');
   const sys_navBar = sheep.$platform.navbar;
-  const emits = defineEmits(['close', 'change']);
 
   const state = reactive({
     pagination: {
@@ -178,6 +184,7 @@
     loadStatus: '',
     leftGoodsList: [], // 双列布局 - 左侧商品
     rightGoodsList: [], // 双列布局 - 右侧商品
+    loadedRawCount: 0, // 已从商品分页接口读取的原始商品数
   });
 
   // 加载瀑布流
@@ -209,9 +216,47 @@
     resetPagination(state.pagination);
     state.leftGoodsList = [];
     state.rightGoodsList = [];
+    state.loadedRawCount = 0;
     count = 0;
     leftHeight = 0;
     rightHeight = 0;
+  }
+
+  async function filterVisibleGoods(goodsList) {
+    if (!goodsList.length) {
+      return [];
+    }
+    const normalGoods = goodsList.filter((item) => item.bizScene !== PUBLICATION_BIZ_SCENE);
+    const publicationGoods = goodsList.filter((item) => item.bizScene === PUBLICATION_BIZ_SCENE);
+    if (!publicationGoods.length) {
+      return goodsList;
+    }
+    if (!studentStore.currentStudentId) {
+      return normalGoods;
+    }
+    const response = await SubscriptionPublicationApi.listVisibleOffers(
+      studentStore.currentStudentId,
+      publicationGoods.map((item) => item.id),
+    );
+    if (!response || response.code !== 0) {
+      return normalGoods;
+    }
+    const visiblePublicationIdSet = new Set(
+      (response.data?.offers || []).map((item) => item.productSpuId),
+    );
+    return goodsList.filter(
+      (item) => item.bizScene !== PUBLICATION_BIZ_SCENE || visiblePublicationIdSet.has(item.id),
+    );
+  }
+
+  function goGoodsDetail(item) {
+    const params = {
+      id: item.id,
+    };
+    if (item.bizScene === PUBLICATION_BIZ_SCENE && studentStore.currentStudentId) {
+      params.studentId = studentStore.currentStudentId;
+    }
+    sheep.$router.go('/pages/goods/index', params);
   }
 
   // 搜索
@@ -279,16 +324,23 @@
     if (code !== 0) {
       return;
     }
+    const pageGoodsList = data?.list || [];
+    state.loadedRawCount += pageGoodsList.length;
+    const visibleGoodsList = await filterVisibleGoods(pageGoodsList);
     // 拼接结算信息（营销）
-    await OrderApi.getSettlementProduct(data.list.map((item) => item.id).join(',')).then((res) => {
-      if (res.code !== 0) {
-        return;
-      }
-      appendSettlementProduct(data.list, res.data);
-    });
-    state.pagination.list = concat(state.pagination.list, data.list);
-    state.pagination.total = data.total;
-    state.loadStatus = state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
+    if (visibleGoodsList.length) {
+      await OrderApi.getSettlementProduct(visibleGoodsList.map((item) => item.id).join(',')).then(
+        (res) => {
+          if (res.code !== 0) {
+            return;
+          }
+          appendSettlementProduct(visibleGoodsList, res.data);
+        },
+      );
+    }
+    state.pagination.list = concat(state.pagination.list, visibleGoodsList);
+    state.pagination.total = data?.total || 0;
+    state.loadStatus = state.loadedRawCount < state.pagination.total ? 'more' : 'noMore';
     mountMasonry();
   }
 
@@ -311,6 +363,14 @@
   onReachBottom(() => {
     loadMore();
   });
+
+  watch(
+    () => studentStore.visibilityVersion,
+    () => {
+      emptyList();
+      getList(state.currentSort, state.currentOrder);
+    },
+  );
 </script>
 
 <style lang="scss" scoped>

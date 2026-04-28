@@ -27,10 +27,28 @@
           <s-goods-item
             :img="item.picUrl"
             :title="item.spuName"
-            :skuText="item.properties.map((property) => property.valueName).join(' ')"
+            :skuText="(item.properties || []).map((property) => property.valueName).join(' ')"
             :price="item.price"
             :num="item.count"
           />
+        </view>
+        <view class="delivery-summary ss-m-x-20 ss-m-t-20" v-if="hasDeliveries(order)">
+          <view
+            class="delivery-summary__item"
+            v-for="delivery in order.deliveries"
+            :key="delivery.id"
+          >
+            <view class="ss-flex ss-row-between ss-col-center">
+              <text class="delivery-summary__title">配送单 #{{ delivery.id }}</text>
+              <view>
+                <text class="delivery-summary__tag">{{
+                  formatDeliveryType(delivery.deliveryType)
+                }}</text>
+                <text class="delivery-summary__status">{{ formatDeliveryStatus(delivery) }}</text>
+              </view>
+            </view>
+            <view class="delivery-summary__meta">{{ formatDeliveryContext(delivery) }}</view>
+          </view>
         </view>
         <view class="pay-box ss-m-t-30 ss-flex ss-row-right ss-p-r-20">
           <view class="ss-flex ss-col-center">
@@ -60,14 +78,14 @@
               查看详情
             </button>
             <button
-              v-if="order.buttons.includes('confirm')"
+              v-if="order.buttons.includes('confirm') && !hasDeliveries(order)"
               class="tool-btn ss-reset-button"
               @tap.stop="onConfirm(order)"
             >
               确认收货
             </button>
             <button
-              v-if="order.buttons.includes('express')"
+              v-if="order.buttons.includes('express') && !hasDeliveries(order)"
               class="tool-btn ss-reset-button"
               @tap.stop="onExpress(order.id)"
             >
@@ -131,6 +149,7 @@
   import { concat, isEmpty } from 'lodash-es';
   import OrderApi from '@/sheep/api/trade/order';
   import { resetPagination } from '@/sheep/helper/utils';
+  import { DeliveryTypeEnum } from '@/sheep/helper/const';
 
   // 数据
   const state = reactive({
@@ -237,6 +256,43 @@
         }
       },
     });
+  }
+
+  function hasDeliveries(order) {
+    return Boolean(order.hasDeliveries || order.deliveries?.length);
+  }
+
+  function formatDeliveryType(deliveryType) {
+    if (deliveryType === DeliveryTypeEnum.EXPRESS.type) {
+      return '快递配送';
+    }
+    if (deliveryType === DeliveryTypeEnum.STATION.type) {
+      return '站点配送';
+    }
+    if (deliveryType === DeliveryTypeEnum.PICK_UP.type) {
+      return '用户自提';
+    }
+    return '混合配送';
+  }
+
+  function formatDeliveryStatus(delivery) {
+    return formatOrderStatus({
+      status: delivery.status,
+      deliveryType: delivery.deliveryType,
+      commentStatus: false,
+    });
+  }
+
+  function formatDeliveryContext(delivery) {
+    if (delivery.deliveryType === DeliveryTypeEnum.EXPRESS.type) {
+      return `收件人：${delivery.receiverName || '-'} ${delivery.receiverMobile || ''}`;
+    }
+    if (delivery.deliveryType === DeliveryTypeEnum.STATION.type) {
+      return `学生：${delivery.studentNameSnapshot || '-'} / 学校：${
+        delivery.schoolNameSnapshot || '-'
+      } / 站点：${delivery.stationNameSnapshot || '-'}`;
+    }
+    return `商品数：${delivery.productCount || 0}，金额：￥${fen2yuan(delivery.payPrice || 0)}`;
   }
 
   // #ifdef MP-WEIXIN
@@ -449,6 +505,50 @@
 
       .pay-color {
         color: #333;
+      }
+    }
+
+    .delivery-summary {
+      padding: 18rpx 20rpx;
+      background: #f8f8f8;
+      border-radius: 12rpx;
+
+      .delivery-summary__item {
+        padding-bottom: 14rpx;
+        margin-bottom: 14rpx;
+        border-bottom: 1rpx solid #eeeeee;
+
+        &:last-child {
+          padding-bottom: 0;
+          margin-bottom: 0;
+          border-bottom: 0;
+        }
+      }
+
+      .delivery-summary__title {
+        font-size: 24rpx;
+        color: #333333;
+        font-weight: 500;
+      }
+
+      .delivery-summary__tag {
+        padding: 4rpx 12rpx;
+        background: #eef6ff;
+        color: #1677ff;
+        border-radius: 999rpx;
+        font-size: 22rpx;
+        margin-right: 8rpx;
+      }
+
+      .delivery-summary__status,
+      .delivery-summary__meta {
+        font-size: 22rpx;
+        color: #999999;
+      }
+
+      .delivery-summary__meta {
+        margin-top: 10rpx;
+        line-height: 34rpx;
       }
     }
 

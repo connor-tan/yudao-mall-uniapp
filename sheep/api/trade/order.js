@@ -49,9 +49,13 @@ const OrderApi = {
       if (data.items[i].studentId) {
         data2[encodeURIComponent('items[' + i + '' + '].studentId')] = data.items[i].studentId + '';
       }
-      if (data.items[i].windowSkuId) {
-        data2[encodeURIComponent('items[' + i + '' + '].windowSkuId')] =
-          data.items[i].windowSkuId + '';
+      if (data.items[i].offerSkuId) {
+        data2[encodeURIComponent('items[' + i + '' + '].offerSkuId')] =
+          data.items[i].offerSkuId + '';
+      }
+      if (data.items[i].deliveryType) {
+        data2[encodeURIComponent('items[' + i + '' + '].deliveryType')] =
+          data.items[i].deliveryType + '';
       }
     }
     const queryString = Object.keys(data2)
@@ -158,6 +162,16 @@ const OrderApi = {
       method: 'GET',
       params: {
         id,
+      },
+    });
+  },
+  // 获得订单配送组的物流轨迹
+  getDeliveryExpressTrackList: (deliveryId) => {
+    return request({
+      url: `/trade/order/get-delivery-express-track-list`,
+      method: 'GET',
+      params: {
+        deliveryId,
       },
     });
   },

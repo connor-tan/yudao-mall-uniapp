@@ -3,6 +3,33 @@
     <!-- 头部地址选择【配送地址】【自提地址】 -->
     <AddressSelection v-if="showAddressSelection" v-model="addressState" />
 
+    <view v-if="deliveryChoiceGroups.length" class="order-card-box ss-m-b-14">
+      <view
+        v-for="group in deliveryChoiceGroups"
+        :key="group.key"
+        class="delivery-choice-card bg-white ss-r-10 ss-p-20 ss-m-b-14"
+      >
+        <view class="delivery-choice__header ss-flex ss-row-between ss-col-center">
+          <view>
+            <view class="delivery-choice__title">{{ group.title }}</view>
+            <view v-if="group.meta" class="delivery-choice__meta">{{ group.meta }}</view>
+          </view>
+          <view v-if="group.locked" class="delivery-choice__locked">已锁定</view>
+        </view>
+        <view class="delivery-choice__options ss-flex ss-col-center ss-m-t-16">
+          <view
+            v-for="option in group.options"
+            :key="option.value"
+            class="delivery-choice__option ss-m-r-16"
+            :class="{ active: group.deliveryType === option.value, disabled: group.locked }"
+            @tap="onDeliveryChoiceChange(group, option.value)"
+          >
+            {{ option.label }}
+          </view>
+        </view>
+      </view>
+    </view>
+
     <view v-if="stationDeliveries.length" class="order-card-box ss-m-b-14">
       <view
         v-for="delivery in stationDeliveries"
@@ -235,10 +262,17 @@
   import { onLoad } from '@dcloudio/uni-app';
   import AddressSelection from '@/pages/order/addressSelection.vue';
   import sheep from '@/sheep';
+  import SpuApi from '@/sheep/api/product/spu';
   import OrderApi from '@/sheep/api/trade/order';
   import TradeConfigApi from '@/sheep/api/trade/config';
   import { fen2yuan } from '@/sheep/hooks/useGoods';
   import { DeliveryTypeEnum } from '@/sheep/helper/const';
+  import {
+    formatDeliveryTypeName,
+    getSupportedDeliveryTypes,
+    isPublicationOrderItem,
+    resolveDefaultDeliveryType,
+  } from '@/sheep/helper/delivery';
 
   const state = reactive({
     orderPayload: {},
@@ -264,18 +298,19 @@
   });
 
   const deliveryList = computed(() => state.orderInfo.deliveries || []);
+  const orderItems = computed(() => state.orderPayload.items || []);
   const stationDeliveries = computed(() =>
     deliveryList.value.filter((item) => item.deliveryType === DeliveryTypeEnum.STATION.type),
   );
   const hasExpressDelivery = computed(() =>
-    deliveryList.value.some((item) => item.deliveryType === DeliveryTypeEnum.EXPRESS.type),
+    orderItems.value.some((item) => item.deliveryType === DeliveryTypeEnum.EXPRESS.type),
   );
-  const showAddressSelection = computed(
-    () => hasExpressDelivery.value || addressState.value.isPickUp,
+  const hasPickUpDelivery = computed(() =>
+    orderItems.value.some((item) => item.deliveryType === DeliveryTypeEnum.PICK_UP.type),
   );
-  const showPickUpFields = computed(
-    () => addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type,
-  );
+  const showAddressSelection = computed(() => hasExpressDelivery.value || hasPickUpDelivery.value);
+  const showPickUpFields = computed(() => hasPickUpDelivery.value);
+  const deliveryChoiceGroups = computed(() => buildDeliveryChoiceGroups());
 
   function buildItemSubtitle(item) {
     const propertyText = (item.properties || []).map((property) => property.valueName).join(' ');
@@ -294,27 +329,134 @@
   }
 
   function syncAddressStateFromOrderInfo() {
-    const hasStation = stationDeliveries.value.length > 0;
-    addressState.value.isPickUp = state.pickUpEnabled && !hasStation;
-    if (hasExpressDelivery.value && !addressState.value.deliveryType) {
+    addressState.value.isPickUp = state.pickUpEnabled && hasPickUpDelivery.value;
+    if (hasExpressDelivery.value && hasPickUpDelivery.value) {
+      if (
+        addressState.value.deliveryType !== DeliveryTypeEnum.EXPRESS.type &&
+        addressState.value.deliveryType !== DeliveryTypeEnum.PICK_UP.type
+      ) {
+        addressState.value.deliveryType = DeliveryTypeEnum.EXPRESS.type;
+      }
+      return;
+    }
+    if (hasExpressDelivery.value) {
       addressState.value.deliveryType = DeliveryTypeEnum.EXPRESS.type;
       return;
     }
-    if (
-      !hasExpressDelivery.value &&
-      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type
-    ) {
-      addressState.value.deliveryType = undefined;
+    if (hasPickUpDelivery.value) {
+      addressState.value.deliveryType = DeliveryTypeEnum.PICK_UP.type;
       return;
     }
-    if (
-      !addressState.value.isPickUp &&
-      addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type
-    ) {
-      addressState.value.deliveryType = hasExpressDelivery.value
-        ? DeliveryTypeEnum.EXPRESS.type
-        : undefined;
+    addressState.value.deliveryType = undefined;
+  }
+
+  function buildDeliveryChoiceGroups() {
+    const groupMap = new Map();
+    orderItems.value.forEach((item, index) => {
+      const supportedDeliveryTypes = getSupportedDeliveryTypes(item, state.pickUpEnabled);
+      if (!supportedDeliveryTypes.length) {
+        return;
+      }
+      const publication = isPublicationOrderItem(item);
+      const key = publication ? `publication:${item.studentId}` : 'normal';
+      const existed = groupMap.get(key);
+      if (existed) {
+        existed.indexes.push(index);
+        existed.options = existed.options.filter((option) =>
+          supportedDeliveryTypes.includes(option),
+        );
+        return;
+      }
+      groupMap.set(key, {
+        key,
+        title: publication ? `刊物配送：${item.studentName || '当前学生'}` : '普通商品配送',
+        meta: publication
+          ? [item.schoolName, item.className || item.gradeName].filter(Boolean).join(' / ')
+          : '普通商品统一选择快递发货或用户自提',
+        indexes: [index],
+        options: supportedDeliveryTypes,
+      });
+    });
+    return Array.from(groupMap.values()).map((group) => {
+      const firstItem = orderItems.value[group.indexes[0]] || {};
+      const defaultDeliveryType = resolveDefaultDeliveryType(firstItem, state.pickUpEnabled);
+      return {
+        ...group,
+        locked: group.options.length <= 1,
+        deliveryType: group.options.includes(firstItem.deliveryType)
+          ? firstItem.deliveryType
+          : group.options.includes(defaultDeliveryType)
+          ? defaultDeliveryType
+          : group.options[0],
+        options: group.options.map((deliveryType) => ({
+          value: deliveryType,
+          label: formatDeliveryTypeName(deliveryType),
+        })),
+      };
+    });
+  }
+
+  async function onDeliveryChoiceChange(group, deliveryType) {
+    if (group.locked || group.deliveryType === deliveryType) {
+      return;
     }
+    group.indexes.forEach((index) => {
+      state.orderPayload.items[index].deliveryType = deliveryType;
+    });
+    await getOrderInfo();
+  }
+
+  function normalizeItemDeliveryTypes() {
+    orderItems.value.forEach((item) => {
+      const supportedDeliveryTypes = getSupportedDeliveryTypes(item, state.pickUpEnabled);
+      if (!supportedDeliveryTypes.includes(item.deliveryType)) {
+        item.deliveryType = resolveDefaultDeliveryType(item, state.pickUpEnabled);
+      }
+    });
+    buildDeliveryChoiceGroups().forEach((group) => {
+      const selectedDeliveryType = group.deliveryType || group.options[0]?.value;
+      group.indexes.forEach((index) => {
+        state.orderPayload.items[index].deliveryType = selectedDeliveryType;
+      });
+    });
+    syncAddressStateFromOrderInfo();
+  }
+
+  async function enrichPayloadItems() {
+    const spuIds = Array.from(
+      new Set(
+        orderItems.value
+          .filter((item) => (!item.deliveryTypes || !item.deliveryTypes.length) && item.spuId)
+          .map((item) => item.spuId),
+      ),
+    );
+    if (!spuIds.length) {
+      return;
+    }
+    const { code, data } = await SpuApi.getSpuListByIds(spuIds.join(','));
+    if (code !== 0) {
+      return;
+    }
+    const spuMap = new Map((data || []).map((spu) => [spu.id, spu]));
+    orderItems.value.forEach((item) => {
+      const spu = spuMap.get(item.spuId);
+      if (!spu) {
+        return;
+      }
+      item.bizScene = item.bizScene || spu.bizScene;
+      item.deliveryTypes = item.deliveryTypes?.length ? item.deliveryTypes : spu.deliveryTypes;
+    });
+  }
+
+  function buildRequestItems() {
+    return orderItems.value.map((item) => ({
+      skuId: item.skuId,
+      count: item.count,
+      cartId: item.cartId,
+      studentId: item.studentId,
+      offerSkuId: item.offerSkuId,
+      deliveryType: item.deliveryType,
+    }));
   }
 
   // ========== 积分 ==========
@@ -335,11 +477,11 @@
 
   // 提交订单
   function onConfirm() {
-    if (
-      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type &&
-      hasExpressDelivery.value &&
-      !addressState.value.addressInfo.id
-    ) {
+    if (orderItems.value.some((item) => !item.deliveryType)) {
+      sheep.$helper.toast('请选择配送方式');
+      return;
+    }
+    if (hasExpressDelivery.value && !addressState.value.addressInfo.id) {
       sheep.$helper.toast('请选择收货地址');
       return;
     }
@@ -367,7 +509,7 @@
   // 创建订单&跳转
   async function submitOrder() {
     const payload = {
-      items: state.orderPayload.items,
+      items: buildRequestItems(),
       couponId: state.orderPayload.couponId,
       remark: state.orderPayload.remark,
       pointStatus: state.pointStatus,
@@ -376,16 +518,10 @@
       seckillActivityId: state.orderPayload.seckillActivityId,
       pointActivityId: state.orderPayload.pointActivityId,
     };
-    if (addressState.value.deliveryType) {
-      payload.deliveryType = addressState.value.deliveryType;
-    }
-    if (
-      addressState.value.deliveryType === DeliveryTypeEnum.EXPRESS.type &&
-      addressState.value.addressInfo.id
-    ) {
+    if (hasExpressDelivery.value && addressState.value.addressInfo.id) {
       payload.addressId = addressState.value.addressInfo.id;
     }
-    if (addressState.value.deliveryType === DeliveryTypeEnum.PICK_UP.type) {
+    if (hasPickUpDelivery.value) {
       payload.pickUpStoreId = addressState.value.pickUpInfo.id;
       payload.receiverName = addressState.value.receiverName;
       payload.receiverMobile = addressState.value.receiverMobile;
@@ -414,12 +550,12 @@
   // 检查库存 & 计算订单价格
   async function getOrderInfo() {
     // 计算价格
+    normalizeItemDeliveryTypes();
     const { data, code } = await OrderApi.settlementOrder({
-      items: state.orderPayload.items,
+      items: buildRequestItems(),
       couponId: state.orderPayload.couponId,
-      deliveryType: addressState.value.deliveryType,
-      addressId: addressState.value.addressInfo.id, // 收件地址编号
-      pickUpStoreId: addressState.value.pickUpInfo.id, //自提门店编号
+      addressId: hasExpressDelivery.value ? addressState.value.addressInfo.id : undefined, // 收件地址编号
+      pickUpStoreId: hasPickUpDelivery.value ? addressState.value.pickUpInfo.id : undefined, //自提门店编号
       receiverName: addressState.value.receiverName, // 选择门店自提时，该字段为联系人名
       receiverMobile: addressState.value.receiverMobile, // 选择门店自提时，该字段为联系人手机
       pointStatus: state.pointStatus,
@@ -460,19 +596,8 @@
       addressState.value.isPickUp = state.pickUpEnabled;
     }
 
-    addressState.value.deliveryType = DeliveryTypeEnum.EXPRESS.type;
-    let orderCode = await getOrderInfo();
-    if (orderCode === 0) {
-      return;
-    }
-    if (state.pickUpEnabled) {
-      addressState.value.deliveryType = DeliveryTypeEnum.PICK_UP.type;
-      orderCode = await getOrderInfo();
-      if (orderCode === 0) {
-        return;
-      }
-    }
-    addressState.value.deliveryType = undefined;
+    await enrichPayloadItems();
+    normalizeItemDeliveryTypes();
     await getOrderInfo();
   });
 
@@ -534,6 +659,46 @@
       font-size: 26rpx;
       color: #666;
       line-height: 42rpx;
+    }
+  }
+
+  .delivery-choice-card {
+    .delivery-choice__title {
+      font-size: 30rpx;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .delivery-choice__meta {
+      margin-top: 6rpx;
+      font-size: 24rpx;
+      color: #999;
+    }
+
+    .delivery-choice__locked {
+      font-size: 24rpx;
+      color: #999;
+    }
+
+    .delivery-choice__option {
+      min-width: 152rpx;
+      height: 56rpx;
+      line-height: 56rpx;
+      text-align: center;
+      border: 1rpx solid #ddd;
+      border-radius: 28rpx;
+      font-size: 26rpx;
+      color: #666;
+    }
+
+    .delivery-choice__option.active {
+      color: var(--ui-BG-Main);
+      border-color: var(--ui-BG-Main);
+      background: rgba(233, 51, 35, 0.06);
+    }
+
+    .delivery-choice__option.disabled {
+      opacity: 0.8;
     }
   }
 

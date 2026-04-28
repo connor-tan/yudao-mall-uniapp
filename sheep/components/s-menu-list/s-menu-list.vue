@@ -7,7 +7,7 @@
         :key="index"
         showArrow
         clickable
-        @tap="sheep.$router.go(item.url)"
+        @tap="handleMenuTap(item)"
       >
         <template v-slot:header>
           <view class="ss-flex ss-col-center">
@@ -69,6 +69,13 @@
 
   const resolveSubtitle = (item) =>
     item.url === SWITCH_STUDENT_ACTION ? currentStudentSubtitle.value : item.subtitle;
+
+  const handleMenuTap = (item) => {
+    if (!item?.url) {
+      return;
+    }
+    sheep.$router.go(item.url);
+  };
 </script>
 
 <style lang="scss">

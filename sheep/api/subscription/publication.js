@@ -1,33 +1,34 @@
 import request from '@/sheep/request';
 
 const SubscriptionPublicationApi = {
-  getPublication(studentId, productSpuId) {
+  listVisibleOffers(studentId, productSpuIds) {
+    const params = { studentId };
+    if (Array.isArray(productSpuIds) && productSpuIds.length) {
+      params.productSpuIds = productSpuIds.join(',');
+    } else if (productSpuIds) {
+      params.productSpuIds = productSpuIds;
+    }
     return request({
-      url: '/subscription/publication/get',
+      url: '/subscription/app/publication/list',
       method: 'GET',
-      params: {
-        studentId,
-        productSpuId,
-      },
+      params,
       custom: {
         showLoading: false,
         showError: false,
       },
     });
   },
-  getPublicationListBySpuIds(studentId, productSpuIds) {
-    return request({
-      url: '/subscription/publication/list-by-spu-ids',
-      method: 'GET',
-      params: {
-        studentId,
-        productSpuIds,
-      },
-      custom: {
-        showLoading: false,
-        showError: false,
-      },
-    });
+  async getVisibleOffer(studentId, productSpuId) {
+    const response = await this.listVisibleOffers(studentId, [productSpuId]);
+    if (!response || response.code !== 0) {
+      return response;
+    }
+    return {
+      ...response,
+      data:
+        (response.data?.offers || []).find((item) => item.productSpuId === Number(productSpuId)) ||
+        null,
+    };
   },
 };
 

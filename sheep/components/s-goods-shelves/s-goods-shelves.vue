@@ -97,7 +97,7 @@
   import SpuApi from '@/sheep/api/product/spu';
   import SubscriptionPublicationApi from '@/sheep/api/subscription/publication';
 
-  const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
+  const PUBLICATION_BIZ_SCENE = 'PUBLICATION';
   const studentStore = sheep.$store('student');
 
   const props = defineProps({
@@ -120,17 +120,17 @@
     if (!list.length) {
       return [];
     }
-    const normalGoods = list.filter((item) => item.domainType !== PUBLICATION_DOMAIN_TYPE);
-    const publicationGoods = list.filter((item) => item.domainType === PUBLICATION_DOMAIN_TYPE);
+    const normalGoods = list.filter((item) => item.bizScene !== PUBLICATION_BIZ_SCENE);
+    const publicationGoods = list.filter((item) => item.bizScene === PUBLICATION_BIZ_SCENE);
     if (!publicationGoods.length) {
       return list;
     }
     if (!studentStore.currentStudentId) {
       return normalGoods;
     }
-    const response = await SubscriptionPublicationApi.getPublicationListBySpuIds(
+    const response = await SubscriptionPublicationApi.listVisibleOffers(
       studentStore.currentStudentId,
-      publicationGoods.map((item) => item.id).join(','),
+      publicationGoods.map((item) => item.id),
     );
     if (!response) {
       return normalGoods;
@@ -139,9 +139,9 @@
     if (code !== 0) {
       return normalGoods;
     }
-    const visiblePublicationIdSet = new Set((data || []).map((item) => item.productSpuId));
+    const visiblePublicationIdSet = new Set((data?.offers || []).map((item) => item.productSpuId));
     return list.filter(
-      (item) => item.domainType !== PUBLICATION_DOMAIN_TYPE || visiblePublicationIdSet.has(item.id),
+      (item) => item.bizScene !== PUBLICATION_BIZ_SCENE || visiblePublicationIdSet.has(item.id),
     );
   }
 
@@ -158,7 +158,7 @@
     const params = {
       id: item.id,
     };
-    if (item.domainType === PUBLICATION_DOMAIN_TYPE && studentStore.currentStudentId) {
+    if (item.bizScene === PUBLICATION_BIZ_SCENE && studentStore.currentStudentId) {
       params.studentId = studentStore.currentStudentId;
     }
     sheep.$router.go('/pages/goods/index', params);

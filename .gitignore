@@ -1,4 +1,5 @@
 unpackage/*
+dist/*
 node_modules/*
 .idea/*
 deploy.sh
@@ -9,3 +10,4 @@ yarn.lock
 package-lock.json
 *.keystore
 pnpm-lock.yaml
+.env.production.local

@@ -17,7 +17,7 @@
           <!--            <view>物流状态：</view>-->
           <!--            <view class="warning-color">{{ state.info.status_text }}</view>-->
           <!--          </view>-->
-          <view class="ss-m-b-8">快递单号：{{ state.info.logisticsNo }}</view>
+          <view class="ss-m-b-8">快递单号：{{ displayLogisticsNo }}</view>
           <view>快递公司：{{ state.info.logisticsName }}</view>
         </view>
       </view>
@@ -61,8 +61,9 @@
   import HighlightNumber from '@/pages/components/HighlightNumberText.vue';
 
   const state = reactive({
-    info: [],
+    info: {},
     tracks: [],
+    deliveryInfo: null,
   });
 
   const goodsImages = computed(() => {
@@ -77,19 +78,30 @@
     return array;
   });
 
-  async function getExpressDetail(id) {
-    const { data } = await OrderApi.getOrderExpressTrackList(id);
-    state.tracks = data;
+  const displayLogisticsNo = computed(() => {
+    return state.deliveryInfo?.logisticsNo || state.info.logisticsNo || '-';
+  });
+
+  async function getExpressDetail(id, deliveryId) {
+    const { data } = deliveryId
+      ? await OrderApi.getDeliveryExpressTrackList(deliveryId)
+      : await OrderApi.getOrderExpressTrackList(id);
+    state.tracks = data || [];
   }
 
-  async function getOrderDetail(id) {
+  async function getOrderDetail(id, deliveryId) {
     const { data } = await OrderApi.getOrderDetail(id);
     state.info = data;
+    state.deliveryInfo = deliveryId
+      ? (data?.deliveries || []).find((item) => String(item.id) === String(deliveryId)) || null
+      : null;
   }
 
   onLoad((options) => {
-    getExpressDetail(options.id);
-    getOrderDetail(options.id);
+    getExpressDetail(options.id, options.deliveryId);
+    if (options.id) {
+      getOrderDetail(options.id, options.deliveryId);
+    }
   });
 
   function handlePhoneClick(data) {

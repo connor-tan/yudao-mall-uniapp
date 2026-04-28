@@ -116,7 +116,7 @@
           <button
             class="ss-reset-button tool-btn"
             v-if="delivery.deliveryType === DeliveryTypeEnum.EXPRESS.type"
-            @tap.stop="onExpress(state.orderInfo.id)"
+            @tap.stop="onExpress(state.orderInfo.id, delivery.id)"
           >
             查看物流
           </button>
@@ -302,7 +302,7 @@
         </button>
         <button
           class="ss-reset-button cancel-btn"
-          v-if="state.orderInfo.buttons?.includes('confirm')"
+          v-if="!deliveryList.length && state.orderInfo.buttons?.includes('confirm')"
           @tap="onConfirm(state.orderInfo.id)"
         >
           确认收货
@@ -388,9 +388,10 @@
   }
 
   // 查看物流
-  async function onExpress(id) {
+  async function onExpress(id, deliveryId) {
     sheep.$router.go('/pages/order/express/log', {
       id,
+      ...(deliveryId ? { deliveryId } : {}),
     });
   }
 

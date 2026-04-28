@@ -204,7 +204,7 @@
 </template>
 
 <script setup>
-  import { reactive, computed } from 'vue';
+  import { reactive, computed, watch } from 'vue';
   import { onLoad, onPageScroll } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
   import CouponApi from '@/sheep/api/promotion/coupon';
@@ -233,8 +233,8 @@
   onPageScroll(() => {});
   import OrderApi from '@/sheep/api/trade/order';
   import { SharePageEnum } from '@/sheep/helper/const';
+  import { PUBLICATION_BIZ_SCENE, resolveSingleDeliveryType } from '@/sheep/helper/delivery';
 
-  const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
   const studentStore = sheep.$store('student');
 
   const bgColor = {
@@ -249,6 +249,7 @@
     goodsId: 0,
     skeletonLoading: true, // SPU 加载中
     goodsInfo: {}, // SPU 信息
+    sourceGoodsInfo: null, // 未按订刊可见性裁剪的原始 SPU 信息
     showSelectSku: false, // 是否展示 SKU 选择弹窗
     selectedSku: {}, // 选中的 SKU
     settlementSku: {}, // 结算的 SKU：由于 selectedSku 不进行默认选中，所以初始使用结算价格最低的 SKU 作为基础展示
@@ -258,7 +259,7 @@
     rewardActivity: {}, // 【满减送】活动
     activityList: [], // 【秒杀/拼团/砍价】可参与的 Activity 营销活动的列表
     subscriptionStudentId: undefined, // 订刊购买绑定的学生
-    subscriptionWindowSkuId: undefined, // 订刊购买绑定的窗口 SKU
+    subscriptionOfferSkuId: undefined, // 订刊购买绑定的窗口 SKU（offerSku）
     publicationPurchasable: true,
     publicationUnavailableText: '当前孩子下暂不可购买',
   });
@@ -267,14 +268,14 @@
     if (!state.goodsInfo) {
       return false;
     }
-    if (state.goodsInfo.domainType === PUBLICATION_DOMAIN_TYPE) {
+    if (state.goodsInfo.bizScene === PUBLICATION_BIZ_SCENE) {
       return Boolean(state.publicationPurchasable && state.goodsInfo.stock > 0);
     }
     return state.goodsInfo.stock > 0;
   });
 
   const purchaseDisabledText = computed(() => {
-    if (state.goodsInfo?.domainType === PUBLICATION_DOMAIN_TYPE && !state.publicationPurchasable) {
+    if (state.goodsInfo?.bizScene === PUBLICATION_BIZ_SCENE && !state.publicationPurchasable) {
       return state.publicationUnavailableText;
     }
     return '已售罄';
@@ -284,8 +285,8 @@
   function onSkuChange(e) {
     state.selectedSku = e;
     state.settlementSku = e;
-    if (e?.windowSkuId) {
-      state.subscriptionWindowSkuId = e.windowSkuId;
+    if (e?.offerSkuId) {
+      state.subscriptionOfferSkuId = e.offerSkuId;
     }
   }
 
@@ -295,27 +296,25 @@
   }
 
   function getSubscriptionPurchaseContext(selectedSku) {
-    if (state.goodsInfo?.domainType !== PUBLICATION_DOMAIN_TYPE) {
+    if (state.goodsInfo?.bizScene !== PUBLICATION_BIZ_SCENE) {
       return {};
     }
     const studentId = state.subscriptionStudentId || studentStore.currentStudentId;
-    const windowSkuId = selectedSku?.windowSkuId || state.subscriptionWindowSkuId;
-    if (!studentId || !windowSkuId) {
+    const offerSkuId = selectedSku?.offerSkuId || state.subscriptionOfferSkuId;
+    if (!studentId || !offerSkuId) {
       sheep.$helper.toast('刊物商品请从订刊入口选择学生后购买');
       return null;
     }
     return {
       studentId,
-      windowSkuId,
+      offerSkuId,
+      deliveryType: resolveSingleDeliveryType(state.goodsInfo?.deliveryTypes),
     };
   }
 
   function openSkuSelector() {
     if (!canPurchaseCurrentGoods.value) {
-      if (
-        state.goodsInfo?.domainType === PUBLICATION_DOMAIN_TYPE &&
-        state.publicationUnavailableText
-      ) {
+      if (state.goodsInfo?.bizScene === PUBLICATION_BIZ_SCENE && state.publicationUnavailableText) {
         sheep.$helper.toast(state.publicationUnavailableText);
       }
       return;
@@ -355,7 +354,10 @@
           {
             skuId: e.id,
             count: e.goods_num,
+            spuId: state.goodsInfo.id,
             categoryId: state.goodsInfo.categoryId,
+            bizScene: state.goodsInfo.bizScene,
+            deliveryTypes: state.goodsInfo.deliveryTypes,
             ...subscriptionContext,
           },
         ],
@@ -443,6 +445,13 @@
     }
   }
 
+  function resetPublicationSelection() {
+    state.showSelectSku = false;
+    state.selectedSku = {};
+    state.settlementSku = {};
+    state.subscriptionOfferSkuId = undefined;
+  }
+
   //获取活动时间
   async function getActivityTime(id) {
     const { code, data } = await RewardActivityApi.getRewardActivity(id);
@@ -455,14 +464,13 @@
 
   function mergePublicationGoodsInfo(goodsInfo, publication) {
     const publicationSkuMap = new Map(
-      (publication?.skus || []).map((sku) => [sku.productSkuId, sku]),
+      (publication?.finalSkus || []).map((sku) => [sku.productSkuId, sku]),
     );
     const visibleSkus = (goodsInfo.skus || [])
       .filter((sku) => publicationSkuMap.has(sku.id))
       .map((sku) => ({
         ...sku,
-        windowSkuId: publicationSkuMap.get(sku.id)?.windowSkuId,
-        maxQuantityPerStudent: publicationSkuMap.get(sku.id)?.maxQuantityPerStudent,
+        offerSkuId: publicationSkuMap.get(sku.id)?.offerSkuId,
       }));
     const prices = visibleSkus.map((sku) => sku.price).filter((price) => Number.isFinite(price));
     const marketPrices = visibleSkus
@@ -480,12 +488,13 @@
   async function adaptPublicationGoodsInfo(goodsInfo) {
     const studentId = state.subscriptionStudentId || studentStore.currentStudentId;
     state.subscriptionStudentId = studentId;
+    state.subscriptionOfferSkuId = undefined;
     if (!studentId) {
       state.publicationPurchasable = false;
       state.publicationUnavailableText = '请先切换孩子后购买';
       return goodsInfo;
     }
-    const res = await SubscriptionPublicationApi.getPublication(studentId, goodsInfo.id);
+    const res = await SubscriptionPublicationApi.getVisibleOffer(studentId, goodsInfo.id);
     if (!res || res.code !== 0 || !res.data) {
       state.publicationPurchasable = false;
       state.publicationUnavailableText = '当前孩子下暂不可购买';
@@ -497,13 +506,25 @@
     state.publicationPurchasable = true;
     state.publicationUnavailableText = '当前孩子下暂不可购买';
     const adaptedGoodsInfo = mergePublicationGoodsInfo(goodsInfo, res.data);
-    if ((res.data.skus || []).length === 1) {
-      state.subscriptionWindowSkuId = res.data.skus[0].windowSkuId;
+    if ((res.data.finalSkus || []).length === 1) {
+      state.subscriptionOfferSkuId = res.data.finalSkus[0].offerSkuId;
     }
     return adaptedGoodsInfo;
   }
 
-  onLoad(async (options) => {
+  async function refreshPublicationGoodsInfo(studentId = studentStore.currentStudentId) {
+    if (state.sourceGoodsInfo?.bizScene !== PUBLICATION_BIZ_SCENE) {
+      return;
+    }
+    resetPublicationSelection();
+    state.subscriptionStudentId = studentId;
+    state.goodsInfo = await adaptPublicationGoodsInfo(state.sourceGoodsInfo);
+    if (state.goodsInfo.skus?.length) {
+      await getSettlementByIds(state.goodsId);
+    }
+  }
+
+  async function loadGoodsInfo(options) {
     // 非法参数
     if (!options.id) {
       state.goodsInfo = null;
@@ -513,7 +534,6 @@
     state.goodsId = options.id;
     state.subscriptionStudentId =
       normalizePositiveNumber(options.studentId) || studentStore.currentStudentId;
-    state.subscriptionWindowSkuId = normalizePositiveNumber(options.windowSkuId);
     if (!state.subscriptionStudentId && isLogin.value) {
       await studentStore.ensureLoaded();
       state.subscriptionStudentId = studentStore.currentStudentId;
@@ -526,7 +546,8 @@
       return;
     }
     let goodsInfo = spuRes.data;
-    if (goodsInfo.domainType === PUBLICATION_DOMAIN_TYPE) {
+    state.sourceGoodsInfo = spuRes.data;
+    if (goodsInfo.bizScene === PUBLICATION_BIZ_SCENE) {
       goodsInfo = await adaptPublicationGoodsInfo(goodsInfo);
     }
     state.goodsInfo = goodsInfo;
@@ -554,7 +575,18 @@
       }
       state.activityList = res.data;
     });
+  }
+
+  onLoad((options) => {
+    loadGoodsInfo(options);
   });
+
+  watch(
+    () => studentStore.visibilityVersion,
+    () => {
+      refreshPublicationGoodsInfo(studentStore.currentStudentId);
+    },
+  );
 </script>
 
 <style lang="scss" scoped>
