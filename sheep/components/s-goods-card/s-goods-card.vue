@@ -23,7 +23,7 @@
           :subTitleColor="data.fields.introduction.color"
           :topRadius="data.borderRadiusTop"
           :bottomRadius="data.borderRadiusBottom"
-          @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+          @click="goGoodsDetail(item)"
         >
           <!-- 购买按钮 -->
           <template v-slot:cart>
@@ -58,7 +58,7 @@
             :topRadius="data.borderRadiusTop"
             :bottomRadius="data.borderRadiusBottom"
             :titleWidth="330 - marginLeft - marginRight"
-            @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+            @click="goGoodsDetail(item)"
             @getHeight="calculateGoodsColumn($event, 'left')"
           >
             <!-- 购买按钮 -->
@@ -88,7 +88,7 @@
             :topRadius="data.borderRadiusTop"
             :bottomRadius="data.borderRadiusBottom"
             :titleWidth="330 - marginLeft - marginRight"
-            @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+            @click="goGoodsDetail(item)"
             @getHeight="calculateGoodsColumn($event, 'right')"
           >
             <!-- 购买按钮 -->
@@ -123,7 +123,7 @@
           :subTitleColor="data.fields.introduction.color"
           :topRadius="data.borderRadiusTop"
           :bottomRadius="data.borderRadiusBottom"
-          @tap="sheep.$router.go('/pages/goods/index', { id: item.id })"
+          @tap="goGoodsDetail(item)"
         >
           <!-- 购买按钮 -->
           <template v-slot:cart>
@@ -141,11 +141,15 @@
   /**
    * 商品卡片
    */
-  import { computed, reactive, onMounted } from 'vue';
+  import { computed, reactive, watch } from 'vue';
   import sheep from '@/sheep';
   import SpuApi from '@/sheep/api/product/spu';
   import OrderApi from '@/sheep/api/trade/order';
+  import SubscriptionPublicationApi from '@/sheep/api/subscription/publication';
   import { appendSettlementProduct } from '@/sheep/hooks/useGoods';
+
+  const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
+  const studentStore = sheep.$store('student');
 
   // 布局类型
   const LayoutTypeEnum = {
@@ -173,23 +177,26 @@
     },
   });
 
-  const { layoutType, btnBuy, spuIds } = props.data || {};
-  const { marginLeft, marginRight } = props.styles || {};
+  const layoutType = computed(() => props.data?.layoutType);
+  const btnBuy = computed(() => props.data?.btnBuy || {});
+  const spuIds = computed(() => props.data?.spuIds || []);
+  const marginLeft = computed(() => props.styles?.marginLeft || 0);
+  const marginRight = computed(() => props.styles?.marginRight || 0);
 
   // 购买按钮样式
   const buyStyle = computed(() => {
-    if (btnBuy.type === 'text') {
+    if (btnBuy.value.type === 'text') {
       // 文字按钮：线性渐变背景颜色
       return {
-        background: `linear-gradient(to right, ${btnBuy.bgBeginColor}, ${btnBuy.bgEndColor})`,
+        background: `linear-gradient(to right, ${btnBuy.value.bgBeginColor}, ${btnBuy.value.bgEndColor})`,
       };
     }
-    if (btnBuy.type === 'img') {
+    if (btnBuy.value.type === 'img') {
       // 图片按钮
       return {
         width: '54rpx',
         height: '54rpx',
-        background: `url(${sheep.$url.cdn(btnBuy.imgUrl)}) no-repeat`,
+        background: `url(${sheep.$url.cdn(btnBuy.value.imgUrl)}) no-repeat`,
         backgroundSize: '100% 100%',
       };
     }
@@ -236,25 +243,85 @@
     return data;
   }
 
-  // 初始化
-  onMounted(async () => {
-    // 加载商品列表
-    state.goodsList = await getGoodsListByIds(spuIds.join(','));
-    // 拼接结算信息（营销）
-    await OrderApi.getSettlementProduct(state.goodsList.map((item) => item.id).join(',')).then(
-      (res) => {
-        if (res.code !== 0) {
-          return;
-        }
-        appendSettlementProduct(state.goodsList, res.data);
-      },
+  async function filterVisibleGoods(goodsList) {
+    if (!goodsList.length) {
+      return [];
+    }
+    const normalGoods = goodsList.filter((item) => item.domainType !== PUBLICATION_DOMAIN_TYPE);
+    const publicationGoods = goodsList.filter(
+      (item) => item.domainType === PUBLICATION_DOMAIN_TYPE,
     );
-    // 只有双列布局时需要
-    if (layoutType === LayoutTypeEnum.TWO_COL) {
-      // 分列
+    if (!publicationGoods.length) {
+      return goodsList;
+    }
+    if (!studentStore.currentStudentId) {
+      return normalGoods;
+    }
+    const response = await SubscriptionPublicationApi.getPublicationListBySpuIds(
+      studentStore.currentStudentId,
+      publicationGoods.map((item) => item.id).join(','),
+    );
+    if (!response) {
+      return normalGoods;
+    }
+    const { data, code } = response;
+    if (code !== 0) {
+      return normalGoods;
+    }
+    const visiblePublicationIdSet = new Set((data || []).map((item) => item.productSpuId));
+    return goodsList.filter(
+      (item) => item.domainType !== PUBLICATION_DOMAIN_TYPE || visiblePublicationIdSet.has(item.id),
+    );
+  }
+
+  function resetLayoutState() {
+    state.goodsList = [];
+    state.leftGoodsList = [];
+    state.rightGoodsList = [];
+    count = 0;
+    leftHeight = 0;
+    rightHeight = 0;
+  }
+
+  async function loadGoodsList() {
+    resetLayoutState();
+    if (!spuIds.value.length) {
+      return;
+    }
+    const goodsList = await getGoodsListByIds(spuIds.value.join(','));
+    state.goodsList = await filterVisibleGoods(goodsList || []);
+    if (state.goodsList.length) {
+      const { code, data } = await OrderApi.getSettlementProduct(
+        state.goodsList.map((item) => item.id).join(','),
+      );
+      if (code === 0) {
+        appendSettlementProduct(state.goodsList, data);
+      }
+    }
+    if (layoutType.value === LayoutTypeEnum.TWO_COL && state.goodsList.length) {
       calculateGoodsColumn();
     }
-  });
+  }
+
+  function goGoodsDetail(item) {
+    const params = {
+      id: item.id,
+    };
+    if (item.domainType === PUBLICATION_DOMAIN_TYPE && studentStore.currentStudentId) {
+      params.studentId = studentStore.currentStudentId;
+    }
+    sheep.$router.go('/pages/goods/index', params);
+  }
+
+  watch(
+    [() => spuIds.value.join(','), () => studentStore.visibilityVersion],
+    () => {
+      loadGoodsList();
+    },
+    {
+      immediate: true,
+    },
+  );
 </script>
 
 <style lang="scss" scoped>

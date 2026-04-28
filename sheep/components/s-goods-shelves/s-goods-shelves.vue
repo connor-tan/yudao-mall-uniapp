@@ -27,7 +27,7 @@
           :topRadius="data.borderRadiusTop"
           :bottomRadius="data.borderRadiusBottom"
           :titleWidth="(454 - marginRight * 2 - data.space * 2 - marginLeft * 2) / 2"
-          @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+          @click="goGoodsDetail(item)"
         />
       </view>
     </view>
@@ -56,7 +56,7 @@
           :titleColor="data.fields.name?.color"
           :topRadius="data.borderRadiusTop"
           :bottomRadius="data.borderRadiusBottom"
-          @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+          @click="goGoodsDetail(item)"
         />
       </view>
     </view>
@@ -79,7 +79,7 @@
               :data="item"
               :titleColor="data.fields.name?.color"
               :titleWidth="(750 - marginRight * 2 - data.space * 4 - marginLeft * 2) / 3"
-              @click="sheep.$router.go('/pages/goods/index', { id: item.id })"
+              @click="goGoodsDetail(item)"
             />
           </view>
         </view>
@@ -92,9 +92,13 @@
   /**
    * 商品栏
    */
-  import { onMounted, ref, computed } from 'vue';
+  import { ref, computed, watch } from 'vue';
   import sheep from '@/sheep';
-  import SpuApi from "@/sheep/api/product/spu";
+  import SpuApi from '@/sheep/api/product/spu';
+  import SubscriptionPublicationApi from '@/sheep/api/subscription/publication';
+
+  const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
+  const studentStore = sheep.$store('student');
 
   const props = defineProps({
     data: {
@@ -106,15 +110,69 @@
       default() {},
     },
   });
-  const { layoutType, spuIds } = props.data;
-  let { marginLeft, marginRight } = props.styles;
+  const layoutType = computed(() => props.data?.layoutType);
+  const spuIds = computed(() => props.data?.spuIds || []);
+  const marginLeft = computed(() => props.styles?.marginLeft || 0);
+  const marginRight = computed(() => props.styles?.marginRight || 0);
   const goodsList = ref([]);
-  onMounted(async () => {
-    if (spuIds.length > 0) {
-      let { data } = await SpuApi.getSpuListByIds(spuIds.join(','));
-      goodsList.value = data;
+
+  async function filterVisibleGoods(list) {
+    if (!list.length) {
+      return [];
     }
-  });
+    const normalGoods = list.filter((item) => item.domainType !== PUBLICATION_DOMAIN_TYPE);
+    const publicationGoods = list.filter((item) => item.domainType === PUBLICATION_DOMAIN_TYPE);
+    if (!publicationGoods.length) {
+      return list;
+    }
+    if (!studentStore.currentStudentId) {
+      return normalGoods;
+    }
+    const response = await SubscriptionPublicationApi.getPublicationListBySpuIds(
+      studentStore.currentStudentId,
+      publicationGoods.map((item) => item.id).join(','),
+    );
+    if (!response) {
+      return normalGoods;
+    }
+    const { code, data } = response;
+    if (code !== 0) {
+      return normalGoods;
+    }
+    const visiblePublicationIdSet = new Set((data || []).map((item) => item.productSpuId));
+    return list.filter(
+      (item) => item.domainType !== PUBLICATION_DOMAIN_TYPE || visiblePublicationIdSet.has(item.id),
+    );
+  }
+
+  async function loadGoodsList() {
+    goodsList.value = [];
+    if (!spuIds.value.length) {
+      return;
+    }
+    const { data } = await SpuApi.getSpuListByIds(spuIds.value.join(','));
+    goodsList.value = await filterVisibleGoods(data || []);
+  }
+
+  function goGoodsDetail(item) {
+    const params = {
+      id: item.id,
+    };
+    if (item.domainType === PUBLICATION_DOMAIN_TYPE && studentStore.currentStudentId) {
+      params.studentId = studentStore.currentStudentId;
+    }
+    sheep.$router.go('/pages/goods/index', params);
+  }
+
+  watch(
+    [() => spuIds.value.join(','), () => studentStore.visibilityVersion],
+    () => {
+      loadGoodsList();
+    },
+    {
+      immediate: true,
+    },
+  );
 </script>
 
 <style lang="scss" scoped>

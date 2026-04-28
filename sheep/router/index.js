@@ -176,12 +176,48 @@ function getCurrentPage() {
   return pages[pages.length - 1];
 }
 
-function handleAction(path) {
+async function handleAction(path) {
   const action = path.split(':');
   switch (action[1]) {
     case 'showShareModal':
       showShareModal();
       break;
+    case 'switchStudent': {
+      if (!$store('user').isLogin) {
+        showAuthModal();
+        return;
+      }
+      const studentStore = $store('student');
+      await studentStore.ensureLoaded(true);
+      if (!studentStore.studentList.length) {
+        uni.showToast({
+          title: '暂无绑定孩子',
+          icon: 'none',
+        });
+        return;
+      }
+      uni.showActionSheet({
+        itemList: studentStore.studentList.map(
+          (item) =>
+            `${item.studentName}${item.id === studentStore.currentStudentId ? '（当前）' : ''}`,
+        ),
+        success: ({ tapIndex }) => {
+          const selectedStudent = studentStore.studentList[tapIndex];
+          if (!selectedStudent) {
+            return;
+          }
+          const changed = studentStore.switchCurrentStudent(selectedStudent.id);
+          if (!changed) {
+            return;
+          }
+          uni.showToast({
+            title: `已切换为${selectedStudent.studentName}`,
+            icon: 'none',
+          });
+        },
+      });
+      break;
+    }
   }
 }
 

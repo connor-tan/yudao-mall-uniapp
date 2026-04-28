@@ -30,7 +30,7 @@
             class="notice-text ss-flex ss-row-center ss-col-center"
             :style="[{ color: item.subtitleColor }]"
           >
-            {{ item.subtitle }}
+            {{ resolveSubtitle(item) }}
           </view>
         </template>
       </uni-list-item>
@@ -43,12 +43,32 @@
    * cell
    */
   import sheep from '@/sheep';
+  import { computed } from 'vue';
+
+  const SWITCH_STUDENT_ACTION = 'action:switchStudent';
+  const studentStore = sheep.$store('student');
   const props = defineProps({
     data: {
       type: Object,
       default: () => ({}),
     },
   });
+
+  const currentStudentSubtitle = computed(() => {
+    const currentStudent = studentStore.currentStudent;
+    if (!currentStudent) {
+      return '未绑定孩子';
+    }
+    const schoolGradeText = [currentStudent.currentSchoolName, currentStudent.gradeName]
+      .filter(Boolean)
+      .join('/');
+    return schoolGradeText
+      ? `${currentStudent.studentName}｜${schoolGradeText}`
+      : currentStudent.studentName;
+  });
+
+  const resolveSubtitle = (item) =>
+    item.url === SWITCH_STUDENT_ACTION ? currentStudentSubtitle.value : item.subtitle;
 </script>
 
 <style lang="scss">

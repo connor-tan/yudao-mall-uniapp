@@ -145,7 +145,7 @@
             <detail-cell-sku
               v-model="state.selectedSku.goods_sku_text"
               :sku="state.selectedSku"
-              @tap="state.showSelectSku = true"
+              @tap="openSkuSelector"
             />
           </view>
 
@@ -176,22 +176,18 @@
 
         <!-- 详情 tabbar -->
         <detail-tabbar v-model="state.goodsInfo">
-          <view class="buy-box ss-flex ss-col-center ss-p-r-20" v-if="state.goodsInfo.stock > 0">
-            <button
-              class="ss-reset-button add-btn ui-Shadow-Main"
-              @tap="state.showSelectSku = true"
-            >
+          <view class="buy-box ss-flex ss-col-center ss-p-r-20" v-if="canPurchaseCurrentGoods">
+            <button class="ss-reset-button add-btn ui-Shadow-Main" @tap="openSkuSelector">
               加入购物车
             </button>
-            <button
-              class="ss-reset-button buy-btn ui-Shadow-Main"
-              @tap="state.showSelectSku = true"
-            >
+            <button class="ss-reset-button buy-btn ui-Shadow-Main" @tap="openSkuSelector">
               立即购买
             </button>
           </view>
           <view class="buy-box ss-flex ss-col-center ss-p-r-20" v-else>
-            <button class="ss-reset-button disabled-btn" disabled> 已售罄 </button>
+            <button class="ss-reset-button disabled-btn" disabled>
+              {{ purchaseDisabledText }}
+            </button>
           </view>
         </detail-tabbar>
 
@@ -232,12 +228,14 @@
   import detailActivityTip from './components/detail/detail-activity-tip.vue';
   import { isEmpty } from 'lodash-es';
   import SpuApi from '@/sheep/api/product/spu';
+  import SubscriptionPublicationApi from '@/sheep/api/subscription/publication';
 
   onPageScroll(() => {});
   import OrderApi from '@/sheep/api/trade/order';
   import { SharePageEnum } from '@/sheep/helper/const';
 
   const PUBLICATION_DOMAIN_TYPE = 'PUBLICATION';
+  const studentStore = sheep.$store('student');
 
   const bgColor = {
     bgColor: '#E93323',
@@ -261,12 +259,34 @@
     activityList: [], // 【秒杀/拼团/砍价】可参与的 Activity 营销活动的列表
     subscriptionStudentId: undefined, // 订刊购买绑定的学生
     subscriptionWindowSkuId: undefined, // 订刊购买绑定的窗口 SKU
+    publicationPurchasable: true,
+    publicationUnavailableText: '当前孩子下暂不可购买',
+  });
+
+  const canPurchaseCurrentGoods = computed(() => {
+    if (!state.goodsInfo) {
+      return false;
+    }
+    if (state.goodsInfo.domainType === PUBLICATION_DOMAIN_TYPE) {
+      return Boolean(state.publicationPurchasable && state.goodsInfo.stock > 0);
+    }
+    return state.goodsInfo.stock > 0;
+  });
+
+  const purchaseDisabledText = computed(() => {
+    if (state.goodsInfo?.domainType === PUBLICATION_DOMAIN_TYPE && !state.publicationPurchasable) {
+      return state.publicationUnavailableText;
+    }
+    return '已售罄';
   });
 
   // 规格变更
   function onSkuChange(e) {
     state.selectedSku = e;
     state.settlementSku = e;
+    if (e?.windowSkuId) {
+      state.subscriptionWindowSkuId = e.windowSkuId;
+    }
   }
 
   function normalizePositiveNumber(value) {
@@ -274,18 +294,33 @@
     return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined;
   }
 
-  function getSubscriptionPurchaseContext() {
+  function getSubscriptionPurchaseContext(selectedSku) {
     if (state.goodsInfo?.domainType !== PUBLICATION_DOMAIN_TYPE) {
       return {};
     }
-    if (!state.subscriptionStudentId || !state.subscriptionWindowSkuId) {
+    const studentId = state.subscriptionStudentId || studentStore.currentStudentId;
+    const windowSkuId = selectedSku?.windowSkuId || state.subscriptionWindowSkuId;
+    if (!studentId || !windowSkuId) {
       sheep.$helper.toast('刊物商品请从订刊入口选择学生后购买');
       return null;
     }
     return {
-      studentId: state.subscriptionStudentId,
-      windowSkuId: state.subscriptionWindowSkuId,
+      studentId,
+      windowSkuId,
     };
+  }
+
+  function openSkuSelector() {
+    if (!canPurchaseCurrentGoods.value) {
+      if (
+        state.goodsInfo?.domainType === PUBLICATION_DOMAIN_TYPE &&
+        state.publicationUnavailableText
+      ) {
+        sheep.$helper.toast(state.publicationUnavailableText);
+      }
+      return;
+    }
+    state.showSelectSku = true;
   }
 
   // 添加购物车
@@ -294,7 +329,7 @@
       sheep.$helper.toast('请选择商品规格');
       return;
     }
-    const subscriptionContext = getSubscriptionPurchaseContext();
+    const subscriptionContext = getSubscriptionPurchaseContext(e);
     if (subscriptionContext === null) {
       return;
     }
@@ -310,7 +345,7 @@
       sheep.$helper.toast('请选择商品规格');
       return;
     }
-    const subscriptionContext = getSubscriptionPurchaseContext();
+    const subscriptionContext = getSubscriptionPurchaseContext(e);
     if (subscriptionContext === null) {
       return;
     }
@@ -418,7 +453,57 @@
     }
   }
 
-  onLoad((options) => {
+  function mergePublicationGoodsInfo(goodsInfo, publication) {
+    const publicationSkuMap = new Map(
+      (publication?.skus || []).map((sku) => [sku.productSkuId, sku]),
+    );
+    const visibleSkus = (goodsInfo.skus || [])
+      .filter((sku) => publicationSkuMap.has(sku.id))
+      .map((sku) => ({
+        ...sku,
+        windowSkuId: publicationSkuMap.get(sku.id)?.windowSkuId,
+        maxQuantityPerStudent: publicationSkuMap.get(sku.id)?.maxQuantityPerStudent,
+      }));
+    const prices = visibleSkus.map((sku) => sku.price).filter((price) => Number.isFinite(price));
+    const marketPrices = visibleSkus
+      .map((sku) => sku.marketPrice)
+      .filter((price) => Number.isFinite(price));
+    return {
+      ...goodsInfo,
+      skus: visibleSkus,
+      stock: visibleSkus.reduce((sum, sku) => sum + (sku.stock || 0), 0),
+      price: prices.length ? Math.min(...prices) : goodsInfo.price,
+      marketPrice: marketPrices.length ? Math.min(...marketPrices) : goodsInfo.marketPrice,
+    };
+  }
+
+  async function adaptPublicationGoodsInfo(goodsInfo) {
+    const studentId = state.subscriptionStudentId || studentStore.currentStudentId;
+    state.subscriptionStudentId = studentId;
+    if (!studentId) {
+      state.publicationPurchasable = false;
+      state.publicationUnavailableText = '请先切换孩子后购买';
+      return goodsInfo;
+    }
+    const res = await SubscriptionPublicationApi.getPublication(studentId, goodsInfo.id);
+    if (!res || res.code !== 0 || !res.data) {
+      state.publicationPurchasable = false;
+      state.publicationUnavailableText = '当前孩子下暂不可购买';
+      return {
+        ...goodsInfo,
+        skus: [],
+      };
+    }
+    state.publicationPurchasable = true;
+    state.publicationUnavailableText = '当前孩子下暂不可购买';
+    const adaptedGoodsInfo = mergePublicationGoodsInfo(goodsInfo, res.data);
+    if ((res.data.skus || []).length === 1) {
+      state.subscriptionWindowSkuId = res.data.skus[0].windowSkuId;
+    }
+    return adaptedGoodsInfo;
+  }
+
+  onLoad(async (options) => {
     // 非法参数
     if (!options.id) {
       state.goodsInfo = null;
@@ -426,30 +511,38 @@
       return;
     }
     state.goodsId = options.id;
-    state.subscriptionStudentId = normalizePositiveNumber(options.studentId);
+    state.subscriptionStudentId =
+      normalizePositiveNumber(options.studentId) || studentStore.currentStudentId;
     state.subscriptionWindowSkuId = normalizePositiveNumber(options.windowSkuId);
+    if (!state.subscriptionStudentId && isLogin.value) {
+      await studentStore.ensureLoaded();
+      state.subscriptionStudentId = studentStore.currentStudentId;
+    }
     // 1. 加载商品信息
-    SpuApi.getSpuDetail(state.goodsId).then((res) => {
-      if (res.code !== 0 || !res.data) {
-        state.goodsInfo = null;
-        state.skeletonLoading = false;
-        return;
-      }
-      // 加载到商品
+    const spuRes = await SpuApi.getSpuDetail(state.goodsId);
+    if (spuRes.code !== 0 || !spuRes.data) {
+      state.goodsInfo = null;
       state.skeletonLoading = false;
-      state.goodsInfo = res.data;
-      // 获取结算信息
+      return;
+    }
+    let goodsInfo = spuRes.data;
+    if (goodsInfo.domainType === PUBLICATION_DOMAIN_TYPE) {
+      goodsInfo = await adaptPublicationGoodsInfo(goodsInfo);
+    }
+    state.goodsInfo = goodsInfo;
+    state.skeletonLoading = false;
+    if (state.goodsInfo.skus?.length) {
       getSettlementByIds(state.goodsId);
-      // 加载是否收藏
-      if (isLogin.value) {
-        FavoriteApi.isFavoriteExists(state.goodsId, 'goods').then((res) => {
-          if (res.code !== 0) {
-            return;
-          }
-          state.goodsInfo.favorite = res.data;
-        });
-      }
-    });
+    }
+    // 加载是否收藏
+    if (isLogin.value) {
+      FavoriteApi.isFavoriteExists(state.goodsId, 'goods').then((res) => {
+        if (res.code !== 0) {
+          return;
+        }
+        state.goodsInfo.favorite = res.data;
+      });
+    }
 
     // 2. 加载优惠劵信息
     getCoupon();

@@ -3,6 +3,7 @@ import $share from '@/sheep/platform/share';
 import { clone, cloneDeep } from 'lodash-es';
 import cart from './cart';
 import app from './app';
+import student from './student';
 import { showAuthModal } from '@/sheep/hooks/useModal';
 import UserApi from '@/sheep/api/member/user';
 import PayWalletApi from '@/sheep/api/pay/wallet';
@@ -86,6 +87,7 @@ const user = defineStore({
         this.isLogin = false;
         uni.removeStorageSync('token');
         uni.removeStorageSync('refresh-token');
+        student().reset();
       } else {
         this.isLogin = true;
         uni.setStorageSync('token', token);
@@ -130,6 +132,7 @@ const user = defineStore({
     // 登录后，加载各种信息
     async loginAfter() {
       await this.updateUserData();
+      await student().initAfterLogin();
 
       // 加载购物车
       cart().getList();
