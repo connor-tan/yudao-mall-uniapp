@@ -6,7 +6,7 @@ import $platform from '@/sheep/platform';
 import $router from '@/sheep/router';
 import user from './user';
 import sys from './sys';
-import { baseUrl, h5Url } from '@/sheep/config';
+import { baseUrl, h5Url, tenantId as defaultTenantId } from '@/sheep/config';
 
 const app = defineStore({
   id: 'app',
@@ -136,28 +136,29 @@ const app = defineStore({
 const adaptTenant = async () => {
   // 1. 获取当前租户 ID
   const oldTenantId = getTenantId();
-  let newTenantId = null;
+  // 校刊汇永久关闭租户业务含义，优先使用构建配置中的固定租户，避免 H5 域名差异触发动态租户解析。
+  let newTenantId = defaultTenantId;
 
   try {
-    // 2.1 情况一：H5：根据 url 参数、域名来获取新的租户ID
+    // 2.1 情况一：H5：配置缺失时，按 URL 参数、域名兜底获取租户 ID
     // #ifdef H5
     // H5 环境下的处理逻辑
-    if (window?.location) {
+    if (!newTenantId && window?.location) {
       // 优先从 URL 查询参数获取 tenantId
       const urlParams = new URLSearchParams(window.location.search);
       newTenantId = urlParams.get('tenantId');
 
-      // 如果 URL 参数中没有，则通过 host 获取
-      if (!newTenantId && window.location.host) {
-        const { data } = await getTenantByWebsite(window.location.host);
+      // 如果 URL 参数中没有，则通过域名获取。后端只接受纯域名，不接受 localhost:3000 这类带端口的 host。
+      if (!newTenantId && window.location.hostname) {
+        const { data } = await getTenantByWebsite(window.location.hostname);
         newTenantId = data?.id;
       }
     }
     // #endif
 
-    // 2.2 情况二：微信小程序：小程序环境下的处理逻辑 - 根据 appId 获取租户
+    // 2.2 情况二：微信小程序：配置缺失时，根据 appId 获取租户
     // #ifdef MP
-    const appId = uni.getAccountInfoSync()?.miniProgram?.appId;
+    const appId = !newTenantId && uni.getAccountInfoSync()?.miniProgram?.appId;
     if (appId) {
       const { data } = await getTenantByWebsite(appId);
       newTenantId = data?.id;
