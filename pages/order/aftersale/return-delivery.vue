@@ -43,15 +43,9 @@
             <button
               class="returnBnt bg-color ss-reset-button ui-BG-Main-Gradient sub-btn"
               form-type="submit"
-              style="
-                background: linear-gradient(
-                  90deg,
-                  var(--ui-BG-Main),
-                  var(--ui-BG-Main-gradient)
-                ) !important;
-              "
-              >提交</button
             >
+              提交
+            </button>
           </view>
         </view>
       </form>
